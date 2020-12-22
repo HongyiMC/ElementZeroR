@@ -25,7 +25,7 @@ template ptrMath*(body: untyped) =
   body
 
 proc refVar(n: NimNode): NimNode =
-  if n.kind == nnkVarTy: nnkVarTy.newTree nnkRefTy.newTree n[0] else: nnkRefTy.newTree n
+  if n.kind == nnkVarTy: nnkRefTy.newTree n[0] else: nnkRefTy.newTree n
 
 macro genref*(body: untyped): untyped =
   # body.expectKind nnkProcDef
@@ -67,3 +67,14 @@ template addTree*(src: NimNode, kind: NimNodeKind, local, body: untyped) =
   var local {.gensym.} = kind.newNimNode()
   body
   src.add local
+
+proc getNimIdent*(src: NimNode): string =
+  case src.kind:
+  of nnkIdent:
+    return src.strVal
+  of nnkPostfix:
+    src[0].expectIdent "*"
+    src[1].expectKind nnkIdent
+    return src[1].strVal
+  else:
+    error("Not an ident node")

@@ -53,7 +53,7 @@ proc testtargets(subname: string, subfolder: string, deps, extra, external: open
           absolute src
           absolute tmpcache
           withDir "tests":
-            exec &"nim c -o:{target} --path:{src} --nimcache:{tmpcache} {main}"
+            exec "nim c -o:$1 --path:$2 --nimcache:$3 $4" % [target, src, tmpcache, main]
 
   target tmpdir / "tests" / subfolder:
     fake = true
@@ -63,16 +63,17 @@ proc testtargets(subname: string, subfolder: string, deps, extra, external: open
     receipt: mkdir target
 
   target "test_" & subfolder:
-    name = &"{subname} test"
+    name = "$1 test" % [subname]
     fake = true
     for x in targets:
       dep x
     receipt:
-      echo fgGreen &"{name} done"
+      echo "$1 done" % [name]
 
 testtargets("C++ Interop", "interop", ["tcppstr", "tcppvector"], ["test.cpp"], [])
 testtargets("NT Internal API", "ntapi", ["ttransaction"], [], [])
-testtargets("SQLIte3", "sqlite3", ["basic", "tmacro"], [], ["dist" / "sqlite3.dll", "src" / "sqlite3" / "*.nim"])
+testtargets("SQLite3", "sqlite3", ["basic", "tmacro"], [], ["dist" / "sqlite3.dll", "src" / "sqlite3" / "*.nim"])
+testtargets("FuncHook", "funchook", ["simple"], [], ["dist" / "funchook.dll", "src" / "funchook" / "*.nim"])
 
 target "test":
   fake = true
@@ -81,7 +82,7 @@ target "test":
     cleanDep tmpdir / "tests" / cate
   clean: rm tmpdir / "tests"
   receipt:
-    echo "Test finished".fgGreen
+    echo "$1".colorfmt { "Test finished": fgGreen }
 
 target "dist":
   fake = true
@@ -100,14 +101,14 @@ template generateNimSource(base, mainsrc: string, body: untyped): untyped =
     deps.excl main
 
 proc nimGenExec(target, cache, main, extra: string): string =
-  &"nim c -o:{target} {extra} --nimcache:{cache} {main}"
+  let xcolor = if colorMode():
+    "--colors:on"
+  else:
+    "--colors:off"
+  "nim c -o:$1 $2 $3 --nimcache:$4 $5" % [target, extra, xcolor, cache, main]
 
 template nimExec(target, cache, main, extra: string) =
-  let xtarget = target
-  let xcache = cache
-  let xmain = main
-  let xextra = extra
-  exec nimGenExec(xtarget, xcache, xmain, xextra)
+  exec nimGenExec(target, cache, main, extra)
 
 target "dist" / "chakra.dll":
   dep "dist"
@@ -122,7 +123,7 @@ target "dist" / "chakra.dll":
     absolute target
     absolute cache
     withDir "src":
-      nimExec target, cache, main, "--app:lib"
+      nimExec target, cache, main, "--app:lib -d:chakra"
 
 template downloadTask(basename, filename, field: string) =
   target basename / filename:
@@ -131,7 +132,7 @@ template downloadTask(basename, filename, field: string) =
     receipt:
       mkdir basename
       let url = cfg.getSectionValue("Dependencies", field)
-      echo "Downloading ", filename," from ", url.fgYellow
+      echo "Downloading $1 from $2".colorfmt [(filename, bold), (url, fgYellow)]
       exec "curl -#Lo " & (basename / filename) & " " & url
 
 downloadTask(tmpdir / "chakra-core", "chakra-core.zip", "ChakraCoreRelease")
@@ -142,7 +143,7 @@ target tmpdir / "chakra-core" / "x64_release" / "ChakraCore.dll":
   output tmpdir / "chakra-core" / "x64_release" / "ChakraCore.pdb"
   receipt:
     withDir tmpdir / "chakra-core":
-      exec &"tar xf chakra-core.zip"
+      exec "tar xf chakra-core.zip"
 
 template depCopy(src, dest: static[string]): untyped =
   target dest:
@@ -164,6 +165,7 @@ target "chakra":
   fake = true
   dep "chakra-core"
   dep "dist" / "chakra.dll"
+  dep "dist" / "funchook.dll"
   receipt: discard
 
 downloadTask("dist", "msdia140.dll", "MSDiaSDK")
@@ -184,7 +186,7 @@ target "dist" / "pdbparser.exe":
     absolute depinc
     absolute cache
     withDir "src":
-      nimExec target, cache, main, &"--app:console --cincludes:{depinc}"
+      nimExec target, cache, main, "--app:console --cincludes:$1" % [depinc]
 
 target "pdbparser":
   fake = true
@@ -234,12 +236,53 @@ target "dist" / "sqlite3.dll":
     "SQLITE_DISABLE_DIRSYNC",
   ]
   receipt:
-    exec &"clang-cl /LD /MD /O2 /Qvec /Fe{target} -Wno-deprecated-declarations {main} " & deps.toSeq.filterIt(it.endsWith ".c").join(" ") & " " & defs.mapIt("/D " & it).join(" ")
+    let csrc = deps.toSeq.filterIt(it.endsWith ".c").join(" ")
+    let diacolor = if colorMode():
+      "-fcolor-diagnostics"
+    else:
+      "-fno-color-diagnostics"
+    exec "clang-cl /LD /MD /O2 /Qvec /Fe$1 $2 -Wno-deprecated-declarations $3 $4 $5" % [
+      target,
+      diacolor,
+      main,
+      csrc,
+      defs.mapIt("/D " & it).join(" ")
+    ]
 
 target "sqlite3":
   fake = true
   main = "dist" / "sqlite3.dll"
   receipt: discard
+
+target tmpdir / "FuncHook" / "CMakeCache.txt":
+  main = "deps" / "funchook" / "CMakeLists.txt"
+  receipt:
+    let tgt = tmpdir / "FuncHook"
+    let src = "deps" / "funchook"
+    exec "cmake -B $1 $2" % [tgt, src]
+
+target tmpdir / "FuncHook" / "MinSizeRel" / "funchook.dll":
+  main = tmpdir / "FuncHook" / "CMakeCache.txt"
+  receipt:
+    withDir tmpdir / "FuncHook":
+      exec "cmake --build . --config MinSizeRel"
+
+target "dist" / "funchook.dll":
+  main = tmpdir / "FuncHook" / "MinSizeRel" / "funchook.dll"
+  receipt:
+    cp(main, target)
+
+target "dist" / "demomod.dll":
+  dep "dist"
+  generateNimSource("src" / "chakra" / "demomod", "demo"):
+    pattern "*.nim"
+  depIt: walkPattern "src" / "chakra" / "*.nim"
+  receipt:
+    absolute main
+    absolute target
+    absolute cache
+    withDir "src":
+      nimExec target, cache, main, "--app:lib"
 
 default "chakra"
 

@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  bds_version: 1.16.201.02
+
 on:
   push:
     branches: [ 💥 ]
@@ -12,23 +15,60 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: 'recursive'
       - name: Set up Visual Studio shell
         uses: egor-tensin/vs-shell@v2
       - name: Install nim
         uses: jiro4989/setup-nim-action@v1
       - name: Install dependencies
         run: |
-          nimble refresh
-          nimble install https://github.com/codehz/nimake@#v0.4.6
-          nimble install winim
-          nimble install clapfn
+          Write-Output "::group::Refresh nimble database"
+          nimble.exe refresh
+          Write-Output "::endgroup::"
+          Write-Output "::group::Install nimake"
+          nimble.exe install https://github.com/codehz/nimake@#v0.5.0
+          Write-Output "::endgroup::"
+          Write-Output "::group::Install winim"
+          nimble.exe install winim
+          Write-Output "::endgroup::"
       - name: Dump targets
-        run: nimake dump
+        run: nimake dump --colors:on
       - name: Build sqlite3
-        run: nimake build -v:5 sqlite3
+        run: nimake build -v:5 --colors:on sqlite3
       - name: Run tests
-        run: nimake build -v:5 test
-      - name: Build pdbparser
-        run: nimake build -v:5 pdbparser
+        run: nimake build -v:5 --colors:on test
       - name: Build default target
-        run: nimake build -v:5
+        run: nimake build -v:5 --colors:on
+      - name: Build pdbparser
+        run: nimake build -v:5 --colors:on pdbparser
+      - name: Build demomod
+        run: nimake build -v:5 --colors:on dist\demomod.dll
+      - name: Parse bedrock_server.pdb and generate database
+        run: |
+          Set-Location dist
+          Write-Output "::group::Downloading"
+          curl.exe -#Lo bedrock_server.zip https://minecraft.azureedge.net/bin-win/bedrock-server-${{ env.bds_version }}.zip
+          Write-Output "::endgroup::"
+          Write-Output "::group::Extracting"
+          tar.exe xf bedrock_server.zip bedrock_server.pdb
+          Write-Output "::endgroup::"
+          Write-Output "::group::Parsing"
+          .\pdbparser.exe bedrock_server.pdb --database:bedrock_server.db
+          Write-Output "::endgroup::"
+          Write-Output "::group::Database info"
+          Get-ItemProperty bedrock_server.db | Format-List
+          Write-Output "::endgroup::"
+      - name: Testing demomod
+        run: |
+          Set-Location dist
+          Write-Output "::group::Preparing"
+          New-Item -ItemType directory -Path mods\demo
+          Copy-Item -Path demomod.dll -Destination mods\demo\demomod.dll
+          Write-Output "::endgroup::"
+          Write-Output "::group::Extracting bedrock_server.exe"
+          tar.exe xf bedrock_server.zip bedrock_server.exe
+          Write-Output "::endgroup::"
+          Write-Output "::group::Executing"
+          & .\bedrock_server.exe
+          Write-Output "::endgroup::"
